@@ -5,7 +5,11 @@ import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
 import { CHANNEL_URL, INSTAGRAM_URL, SUBSCRIBE_URL, type Video } from "@/lib/youtube";
-import { canvasPixels, fromPixels, galaxy, sphere, type Shape } from "@/lib/shapes";
+import { Line } from "@react-three/drei";
+import type { Line2, LineSegments2 } from "three-stdlib";
+type FatLine = Line2 | LineSegments2;
+import { canvasPixels, fromPixels, galaxy, portal, sphere, type Shape } from "@/lib/shapes";
+import { pose, type Stage } from "@/lib/stickman";
 
 type Scene =
   | { kind: "intro" | "name" | "about" | "connect" | "outro"; id?: string; label: string }
@@ -18,18 +22,26 @@ const easeSeg = (seg: number) => {
   return i + (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 };
 
-const shared = { progress: 0, pointer: { x: 0, y: 0 }, hover: false, mode: 0, t: 0 };
+const shared = { progress: 0, seg: 0, pointer: { x: 0, y: 0 }, hover: false, mode: 0, t: 0 };
 
 // transition styles, one per scroll step (see the shader)
 const VORTEX = 0, SHATTER = 1, FLIP = 2, WAVE = 3, RAIN = 4, WARP = 5, COLLAPSE = 6;
-const SEQUENCE = [VORTEX, SHATTER, FLIP, WAVE, RAIN, WARP, COLLAPSE, VORTEX, FLIP];
-// the last step always warps back out to the galaxy
-const modeFor = (step: number, steps: number) => (step === steps - 1 ? WARP : SEQUENCE[step % SEQUENCE.length]);
+// which transition each step uses, picked by what it goes from/to; portal to portal collapses into the next
+const modeFor = (from: string, to: string, last: boolean) =>
+  last ? WARP : from === "intro" ? VORTEX : from === "name" ? SHATTER : from === "video" && to === "video" ? COLLAPSE : to === "about" ? VORTEX : to === "connect" ? FLIP : RAIN;
+void WAVE;
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 const PASSIONS = ["Video editing", "Football", "Content creation", "Vlogging", "Creative experiments"];
 
 /** One cloud of stars. Each scroll step it flows to the next shape with its own transition. */
-function Morph({ shapes, centers, count }: { shapes: React.RefObject<Shape[]>; centers: React.RefObject<[number, number][]>; count: number }) {
+function Morph({ shapes, centers, kinds, radius, count, children }: {
+  shapes: React.RefObject<Shape[]>;
+  centers: React.RefObject<[number, number][]>;
+  kinds: string[];
+  radius: React.RefObject<[number, number]>;
+  count: number;
+  children?: React.ReactNode;
+}) {
   const { camera, viewport } = useThree();
   const group = useRef<THREE.Group>(null);
   const shown = useRef({ i: -1, version: -1 });
@@ -58,9 +70,12 @@ function Morph({ shapes, centers, count }: { shapes: React.RefObject<Shape[]>; c
         uMouse: { value: new THREE.Vector3(99, 99, 0) },
         uC0: { value: new THREE.Vector2() }, // centre of the shape we leave
         uC1: { value: new THREE.Vector2() }, // centre of the shape we arrive at
+        uSpinA: { value: 0 }, // 1 when the shape we leave is a portal (it swirls)
+        uSpinB: { value: 0 },
+        uRad: { value: new THREE.Vector2(2, 3) }, // portal radii
       },
       vertexShader: /* glsl */ `
-        uniform float uT, uMode, uTime, uPixel; uniform vec3 uMouse; uniform vec2 uC0, uC1;
+        uniform float uT, uMode, uTime, uPixel, uSpinA, uSpinB; uniform vec3 uMouse; uniform vec2 uC0, uC1, uRad;
         attribute vec3 aTo, aColTo; attribute float aRand;
         varying vec3 vColor; varying float vA;
         const float PI = 3.14159265;
@@ -68,9 +83,18 @@ function Morph({ shapes, centers, count }: { shapes: React.RefObject<Shape[]>; c
         float inOut(float x) { return x < 0.5 ? 4.0 * x * x * x : 1.0 - pow(-2.0 * x + 2.0, 3.0) / 2.0; }
         float backOut(float x) { float c = 1.9; return 1.0 + (c + 1.0) * pow(x - 1.0, 3.0) + c * pow(x - 1.0, 2.0); }
         float h1(float n) { return fract(sin(n) * 43758.5453); }
+        // portals swirl: rotate in the portal's own circle space so the ellipse keeps its shape
+        vec2 swirl(vec2 q, vec2 c, float on) {
+          if (on < 0.5) return q;
+          vec2 d = (q - c) / uRad;
+          d = rot(uTime * (0.25 + aRand * 0.3) / (0.35 + length(d))) * d;
+          return c + d * uRad;
+        }
 
         void main() {
           vec3 A = position, B = aTo;
+          A.xy = swirl(A.xy, uC0, uSpinA);
+          B.xy = swirl(B.xy, uC1, uSpinB);
           int m = int(uMode + 0.5);
           vec2 c = mix(uC0, uC1, inOut(clamp(uT, 0.0, 1.0)));
           // when each star leaves: random for organic modes, left-to-right sweeps for wipes
@@ -164,7 +188,11 @@ function Morph({ shapes, centers, count }: { shapes: React.RefObject<Shape[]>; c
       shown.current = { i, version };
     }
     material.uniforms.uT.value = seg - i;
-    material.uniforms.uMode.value = modeFor(i, list.length - 1);
+    material.uniforms.uMode.value = modeFor(kinds[i], kinds[i + 1], i === list.length - 2);
+    material.uniforms.uSpinA.value = kinds[i] === "video" ? 1 : 0;
+    material.uniforms.uSpinB.value = kinds[i + 1] === "video" ? 1 : 0;
+    if (radius.current) (material.uniforms.uRad.value as THREE.Vector2).set(...radius.current);
+    shared.seg = seg;
     const cs = centers.current;
     if (cs?.[i + 1]) {
       (material.uniforms.uC0.value as THREE.Vector2).set(...cs[i]);
@@ -198,7 +226,170 @@ function Morph({ shapes, centers, count }: { shapes: React.RefObject<Shape[]>; c
   return (
     <group ref={group}>
       <points geometry={geometry} material={material} frustumCulled={false} />
+      {children}
     </group>
+  );
+}
+
+type Layout = Stage & { rx: number; ry: number; man: number; halfW: number };
+const PORTAL_TINTS = ["#9fd8ff", "#c9a7ff", "#ffb08a", "#8fe3ff", "#ff9fb8", "#ffd27a"];
+
+/** The latest videos as a walk: a stickman drops in, walks the glowing ground, opens a portal
+ *  (the star ring + the real thumbnail swirling open inside it), steps in, and lands at the next one. */
+function Journey({ layout, videos, first, onPlay }: { layout: React.RefObject<Layout | null>; videos: Video[]; first: number; onPlay: (v: Video) => void }) {
+  const portalRef = useRef<THREE.Mesh>(null);
+  const man = useRef<THREE.Group>(null);
+  const limbs = useRef<(FatLine | null)[]>([]);
+  const groundLine = useRef<FatLine | null>(null);
+  const active = useRef(-1);
+
+  const textures = useMemo(() => {
+    const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin("anonymous");
+    return videos.map((v) => {
+      const t = loader.load(v.thumb);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    });
+  }, [videos]);
+
+  const surface = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
+        uniforms: { uMap: { value: null }, uOpen: { value: 0 }, uTime: { value: 0 }, uAspect: { value: 0.66 }, uTint: { value: new THREE.Color("#9fd8ff") } },
+        vertexShader: /* glsl */ `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: /* glsl */ `
+          uniform sampler2D uMap; uniform float uOpen, uTime, uAspect; uniform vec3 uTint; varying vec2 vUv;
+          mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+          void main() {
+            vec2 q = (vUv - 0.5) * 2.0;                    // 1.0 = the portal rim
+            float r = length(q);
+            float edge = uOpen * 0.96;
+            // the picture spirals open: heavy twist while opening, a slow living swirl once open
+            float twist = (1.0 - uOpen) * 7.0 * (1.0 - r) + 0.25 * sin(uTime * 0.7) * (1.0 - r);
+            vec2 w = rot(twist) * q;
+            // object-fit: cover for a square thumbnail inside an ellipse of this aspect
+            vec2 uv = 0.5 + vec2(w.x * 0.5 * uAspect, w.y * 0.5);
+            vec3 img = texture2D(uMap, uv).rgb;
+            float inside = smoothstep(edge, edge - 0.06, r);
+            float rim = exp(-abs(r - edge) * 28.0) * uOpen;
+            vec3 col = img * (0.75 + 0.35 * smoothstep(0.9, 0.2, r)) + uTint * rim * 0.9;
+            gl_FragColor = vec4(col, clamp(inside * uOpen + rim * 0.6, 0.0, 1.0));
+            #include <colorspace_fragment>
+          }`,
+      }),
+    []
+  );
+
+  const dust = useMemo(() => {
+    const n = 1400;
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) pos.set([Math.random() * 30 - 15, Math.random(), Math.random() * 5 - 3.5], i * 3);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    const m = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      toneMapped: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: { uTravel: { value: 0 }, uGround: { value: -3.6 }, uVis: { value: 0 }, uPixel: { value: 1 }, uHalf: { value: 15 } },
+      vertexShader: /* glsl */ `
+        uniform float uTravel, uGround, uVis, uPixel, uHalf; varying float vA;
+        void main() {
+          vec3 p = position;
+          // the ground slides past as you travel, wrapping around
+          p.x = mod(p.x - uTravel + uHalf, uHalf * 2.0) - uHalf;
+          p.y = uGround - 0.02 + pow(p.y, 3.0) * 0.5;
+          vec4 mv = modelViewMatrix * vec4(p, 1.0);
+          gl_Position = projectionMatrix * mv;
+          gl_PointSize = uPixel * (1.0 + position.y * 2.0) * (16.0 / -mv.z);
+          vA = uVis * (1.0 - abs(p.x) / uHalf) * (0.35 + 0.65 * (1.0 - position.y));
+        }`,
+      fragmentShader: /* glsl */ `varying float vA; void main() { float d = length(gl_PointCoord - 0.5); gl_FragColor = vec4(0.75, 0.88, 1.0, vA * smoothstep(0.5, 0.0, d)); }`,
+    });
+    return { g, m };
+  }, []);
+
+  useFrame((state) => {
+    const L = layout.current;
+    if (!L) return;
+    const seg = shared.seg;
+    const time = state.clock.elapsedTime;
+    const lastV = first + videos.length - 1;
+    const vis = THREE.MathUtils.smoothstep(seg, first - 0.75, first - 0.4) * (1 - THREE.MathUtils.smoothstep(seg, lastV + 0.6, lastV + 0.95));
+
+    dust.m.uniforms.uTravel.value = seg * 7;
+    dust.m.uniforms.uGround.value = L.ground;
+    dust.m.uniforms.uVis.value = vis;
+    dust.m.uniforms.uHalf.value = L.halfW;
+    dust.m.uniforms.uPixel.value = state.gl.getPixelRatio();
+    if (groundLine.current) {
+      groundLine.current.position.y = L.ground;
+      (groundLine.current.material as THREE.Material & { opacity: number }).opacity = vis * 0.45;
+    }
+
+    const n = Math.round(seg - first);
+    const here = n >= 0 && n < videos.length && Math.abs(seg - (first + n)) <= 0.5;
+    const u = here ? seg - (first + n - 0.5) : -1;
+    const P = pose(Math.max(u, 0), L, time);
+
+    // portal surface
+    if (here && n !== active.current) {
+      active.current = n;
+      surface.uniforms.uMap.value = textures[n];
+      (surface.uniforms.uTint.value as THREE.Color).set(PORTAL_TINTS[n % PORTAL_TINTS.length]);
+    }
+    surface.uniforms.uOpen.value = here ? P.open : 0;
+    surface.uniforms.uTime.value = time;
+    surface.uniforms.uAspect.value = L.rx / L.ry;
+    if (portalRef.current) {
+      portalRef.current.visible = here && P.open > 0.001;
+      portalRef.current.position.set(L.px, L.py, 0.05);
+      portalRef.current.scale.set(L.rx * 2, L.ry * 2, 1);
+    }
+
+    // stickman
+    if (man.current) {
+      man.current.visible = here && P.alpha > 0;
+      man.current.position.set(P.x, P.y, 0.4);
+      man.current.scale.setScalar(L.man * P.scale);
+      man.current.rotation.z = -P.spin;
+    }
+    P.chains.forEach((c, k) => limbs.current[k]?.geometry.setPositions(c.flatMap(([x, y]) => [x, y, 0])));
+    const head: number[] = [];
+    for (let a = 0; a <= 20; a++) head.push(P.head[0] + Math.cos((a / 20) * Math.PI * 2) * P.headR, P.head[1] + Math.sin((a / 20) * Math.PI * 2) * P.headR, 0);
+    limbs.current[5]?.geometry.setPositions(head);
+  });
+
+  const glow = { color: "#e6f6ff", lineWidth: 2.6, toneMapped: false, transparent: true } as const;
+  return (
+    <>
+      <points geometry={dust.g} material={dust.m} frustumCulled={false} />
+      <Line ref={groundLine} points={[[-40, 0, 0], [40, 0, 0]]} color="#9fd8ff" lineWidth={1} transparent opacity={0} toneMapped={false} />
+      <mesh
+        ref={portalRef}
+        material={surface}
+        renderOrder={5} // over the star cloud, so the thumbnail isn't buried under the swirl
+        visible={false}
+        onClick={(e) => {
+          if (active.current < 0 || (surface.uniforms.uOpen.value as number) < 0.6) return;
+          e.stopPropagation();
+          onPlay(videos[active.current]);
+        }}
+        onPointerOver={() => { if ((surface.uniforms.uOpen.value as number) > 0.6) document.body.style.cursor = "pointer"; }}
+        onPointerOut={() => { document.body.style.cursor = ""; }}
+      >
+        <planeGeometry args={[1, 1]} />
+      </mesh>
+      <group ref={man} visible={false}>
+        {[2, 3, 3, 3, 3, 21].map((pts, k) => (
+          <Line key={k} ref={(l) => { limbs.current[k] = l; }} points={Array.from({ length: pts }, () => [0, 0, 0] as [number, number, number])} {...glow} />
+        ))}
+      </group>
+    </>
   );
 }
 
@@ -266,6 +457,8 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
   const [inView, setInView] = useState(true);
   const shapes = useRef<Shape[]>([]);
   const centers = useRef<[number, number][]>([]);
+  const layout = useRef<Layout | null>(null);
+  const radius = useRef<[number, number]>([2, 3]);
   const shorts = useMemo(() => videos.slice(0, 6), [videos]);
 
   const scenes: Scene[] = useMemo(
@@ -338,29 +531,22 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
       bump();
     });
 
-    shorts.forEach((v, n) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        if (!alive) return;
-        const W = 108, H = 192; // 9:16
-        const px = canvasPixels(W, H, (ctx) => {
-          // object-fit: cover
-          const s = Math.max(W / img.width, H / img.height);
-          ctx.drawImage(img, (W - img.width * s) / 2, (H - img.height * s) / 2, img.width * s, img.height * s);
-        });
-        const lift3 = (c: number) => Math.min(1, Math.pow(c, 0.75) * 1.25);
-        list[2 + n] = fromPixels(px, W, H, count, {
-          height: size(8.4, 0.4), x: side, y: wide ? 0 : (visH * 0.17) / k, depth: 1.6,
-          color: (u, v) => {
-            const k = (Math.min(Math.floor(v * H), H - 1) * W + Math.min(Math.floor(u * W), W - 1)) * 4;
-            return [lift3(px[k] / 255), lift3(px[k + 1] / 255), lift3(px[k + 2] / 255)];
-          },
-        });
-        bump();
-      };
-      img.src = v.thumb;
+    // the latest videos are portals; the stickman walks the ground beneath them
+    const rx = size(2.1, 0.11), ry = size(3.1, 0.165);
+    const py = wide ? 0.5 : (visH * 0.2) / k;
+    const halfW = (visH * window.innerWidth) / window.innerHeight / 2 / k;
+    const ground = wide ? -3.7 : py - ry - (visH * 0.06) / k;
+    layout.current = {
+      px: side, py, rx, ry, ground, halfW,
+      startX: wide ? -halfW * 0.72 : -halfW * 0.75,
+      standX: side - rx - (wide ? 1.1 : 0.45 / k),
+      man: wide ? 1 : (visH * 0.085) / k / 1.45,
+    };
+    radius.current = [rx, ry];
+    shorts.forEach((_, n) => {
+      list[2 + n] = portal(count, rx, ry, side, py, PORTAL_TINTS[n % PORTAL_TINTS.length]);
     });
+    centers.current = centers.current.map((c, i) => (scenes[i].kind === "video" ? [side, py] : c));
     return () => { alive = false; };
   }, [scenes, count, wide, last, shorts]);
 
@@ -422,7 +608,9 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
           <color attach="background" args={["#030305"]} />
           <Sky />
           <Camera />
-          <Morph shapes={shapes} centers={centers} count={count} />
+          <Morph shapes={shapes} centers={centers} kinds={scenes.map((s) => s.kind)} radius={radius} count={count}>
+            <Journey layout={layout} videos={shorts} first={2} onPlay={onPlay} />
+          </Morph>
           <EffectComposer multisampling={0}>
             <Bloom mipmapBlur luminanceThreshold={0.35} intensity={0.75} radius={0.75} />
             <Vignette offset={0.25} darkness={0.75} />
@@ -480,14 +668,6 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
                       <a href={s.v.url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost">Open on YouTube</a>
                     </div>
                   </div>
-                  {/* the star-drawn thumbnail is clickable too */}
-                  <button
-                    onClick={() => onPlay(s.v)}
-                    data-cursor="Play"
-                    tabIndex={-1}
-                    aria-hidden
-                    className={`absolute left-[29%] top-[8%] h-[62%] w-[42%] md:left-[52%] md:top-[6%] md:h-[88%] md:w-[30%] ${on ? "pointer-events-auto" : "pointer-events-none"}`}
-                  />
                 </div>
               );
             if (s.kind === "about")

@@ -112,3 +112,31 @@ export function canvasPixels(w: number, h: number, draw: (ctx: CanvasRenderingCo
   draw(ctx);
   return ctx.getImageData(0, 0, w, h).data;
 }
+
+/** A portal: a bright elliptical rim of stars, sparks thrown off it, and spiral wisps inside. */
+export function portal(n: number, rx: number, ry: number, x: number, y: number, tint: string): Shape {
+  const t = hex(tint);
+  return build(n, (i, p, c) => {
+    const roll = i / n;
+    let r: number;
+    let a = Math.random() * Math.PI * 2;
+    let glow: number;
+    if (roll < 0.7) {
+      r = 1 + gauss() * 0.025; // rim
+      glow = 1;
+    } else if (roll < 0.85) {
+      r = 1.04 + Math.pow(Math.random(), 2) * 0.4; // sparks
+      glow = 0.55;
+    } else {
+      r = 0.72 + Math.random() * 0.24; // spiral wisps just inside the rim, so the picture stays clear
+      a = (i % 3) * ((Math.PI * 2) / 3) + r * 5 + gauss() * 0.25;
+      glow = 0.35 + r * 0.4;
+    }
+    p[0] = x + Math.cos(a) * r * rx;
+    p[1] = y + Math.sin(a) * r * ry;
+    p[2] = gauss() * 0.06;
+    // white-hot rim fading into the portal's colour
+    const w = roll < 0.7 ? 0.55 : 0.1;
+    c[0] = (t[0] * (1 - w) + w) * glow; c[1] = (t[1] * (1 - w) + w) * glow; c[2] = (t[2] * (1 - w) + w) * glow;
+  });
+}
