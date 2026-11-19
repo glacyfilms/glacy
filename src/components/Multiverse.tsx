@@ -211,7 +211,12 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
   useEffect(() => {
     let alive = true;
     const side = wide ? 3.4 : 0; // on desktop the subject sits right of the copy
-    const lift = wide ? 0 : 1.3; // on phones it sits above the copy
+    // phones: the cloud is scaled down so GLACY fits (see Morph), so size the other shapes
+    // in screen terms instead and lift them into the top half, above the copy
+    const visH = 2 * 16 * Math.tan((20 * Math.PI) / 180); // camera z=16, fov 40
+    const k = Math.min(1, (visH * window.innerWidth) / window.innerHeight / 16);
+    const lift = wide ? 0 : (visH * 0.22) / k;
+    const size = (desktop: number, phoneShareOfHeight: number) => (wide ? desktop : (visH * phoneShareOfHeight) / k);
     const base = galaxy(count);
     const list: Shape[] & { version?: number } = scenes.map(() => base);
     list.version = 0;
@@ -219,7 +224,7 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
     shapes.current = list;
 
     list[last] = galaxy(count, 11);
-    list[scenes.findIndex((s) => s.kind === "about")] = sphere(count, 3.4, side);
+    list[scenes.findIndex((s) => s.kind === "about")] = sphere(count, size(3.4, 0.15), side, lift);
 
     const yt = canvasPixels(300, 210, (ctx) => {
       ctx.fillStyle = "#ff1f3d";
@@ -231,7 +236,7 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
       ctx.moveTo(118, 62); ctx.lineTo(118, 148); ctx.lineTo(196, 105); ctx.closePath();
       ctx.fill();
     });
-    list[scenes.findIndex((s) => s.kind === "connect")] = fromPixels(yt, 300, 210, count, { height: 4.6, x: side, y: lift, depth: 0.6 });
+    list[scenes.findIndex((s) => s.kind === "connect")] = fromPixels(yt, 300, 210, count, { height: size(4.6, 0.17), x: side, y: lift, depth: 0.6 });
 
     document.fonts.load('700 260px "Space Grotesk Variable"').finally(() => {
       if (!alive) return;
@@ -262,7 +267,7 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
         });
         const lift3 = (c: number) => Math.min(1, Math.pow(c, 0.75) * 1.25);
         list[2 + n] = fromPixels(px, W, H, count, {
-          height: wide ? 8.4 : 7.2, x: side, y: lift, depth: 1.6,
+          height: size(8.4, 0.4), x: side, y: wide ? 0 : (visH * 0.17) / k, depth: 1.6,
           color: (u, v) => {
             const k = (Math.min(Math.floor(v * H), H - 1) * W + Math.min(Math.floor(u * W), W - 1)) * 4;
             return [lift3(px[k] / 255), lift3(px[k + 1] / 255), lift3(px[k + 2] / 255)];

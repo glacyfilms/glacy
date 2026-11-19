@@ -43,7 +43,7 @@ export function galaxy(n: number, radius = 9): Shape {
 }
 
 /** Even sphere of stars (fibonacci lattice) with soft latitude bands. */
-export function sphere(n: number, radius = 3.6, x = 0): Shape {
+export function sphere(n: number, radius = 3.6, x = 0, y0 = 0): Shape {
   const ga = Math.PI * (3 - Math.sqrt(5));
   const ice = hex("#9fd8ff");
   return build(n, (i, p, c) => {
@@ -52,7 +52,7 @@ export function sphere(n: number, radius = 3.6, x = 0): Shape {
     const th = i * ga;
     const rr = radius * (1 + gauss() * 0.012);
     p[0] = Math.cos(th) * r * rr + x;
-    p[1] = y * rr;
+    p[1] = y * rr + y0;
     p[2] = Math.sin(th) * r * rr;
     const band = 0.55 + 0.45 * Math.abs(Math.sin(y * 9 + Math.cos(th) * 1.5));
     c[0] = ice[0] * band; c[1] = ice[1] * band; c[2] = ice[2] * band;
