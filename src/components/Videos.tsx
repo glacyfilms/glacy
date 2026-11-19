@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Magnetic from "./Magnetic";
 import Hero from "./Hero";
+import Footer from "./Footer";
 
 const Multiverse = dynamic(() => import("./Multiverse"), { ssr: false });
 import { CHANNEL_URL, type Video } from "@/lib/youtube";
@@ -276,6 +277,7 @@ export default function Videos({ videos }: { videos: Video[] }) {
 
       <PlayerModal video={active} onClose={close} />
     </section>
+    <Footer />
     </>
   );
 }

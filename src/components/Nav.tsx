@@ -8,7 +8,6 @@ import { SUBSCRIBE_URL } from "@/lib/youtube";
 export const LINKS = [
   { href: "#work", label: "Work" },
   { href: "#about", label: "About" },
-  { href: "#world", label: "World" },
   { href: "#connect", label: "Connect" },
 ];
 
