@@ -1,71 +1,114 @@
 "use client";
 
-import dynamic from "next/dynamic";
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { gsap } from "gsap";
 import Magnetic from "./Magnetic";
-import { CHANNEL_URL } from "@/lib/youtube";
+import { toTimecode as tc } from "./EditDock";
+import { CHANNEL_URL, type Video } from "@/lib/youtube";
 
-const HeroScene = dynamic(() => import("./HeroScene"), { ssr: false });
+const CUT_MS = 520; // one cut roughly every half second, like a fast edit
 
-const hasWebGL = () => {
-  try {
-    return !!document.createElement("canvas").getContext("webgl2");
-  } catch {
-    return false;
-  }
-};
-
-export default function Hero() {
+/** Program-monitor hero: a hard-cut montage of the real thumbnails behind a giant inverting wordmark. */
+export default function Hero({ videos }: { videos: Video[] }) {
   const root = useRef<HTMLElement>(null);
-  const [gl, setGl] = useState<boolean | null>(null);
-
-  useEffect(() => setGl(hasWebGL()), []);
+  const frames = videos.slice(0, 12);
+  const [cut, setCut] = useState(0);
+  const [flash, setFlash] = useState(false);
+  const [frame, setFrame] = useState(0);
 
   useEffect(() => {
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const el = root.current;
-    if (!el || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (!el) return;
+    let cutId = 0;
+    let tcId = 0;
     const ctx = gsap.context(() => {
-      gsap.set("[data-hero-in]", { opacity: 0, y: 40 });
-      const play = () =>
-        gsap.to("[data-hero-in]", { opacity: 1, y: 0, duration: 1.3, ease: "expo.out", stagger: 0.08, delay: 0.5 });
-      if (window.glacyReady) play();
-      else window.addEventListener("glacy:ready", play, { once: true });
+      if (!reduce) {
+        gsap.set("[data-letter]", { yPercent: 105 });
+        gsap.set("[data-hero-in]", { opacity: 0, y: 30 });
+      }
     }, el);
-    return () => ctx.revert();
-  }, []);
+    const play = () => {
+      if (reduce) return;
+      ctx.add(() => {
+        // stepped ease: the letters land frame by frame, like clips snapping onto a track
+        gsap.to("[data-letter]", { yPercent: 0, duration: 0.42, ease: "steps(7)", stagger: 0.08 });
+        gsap.to("[data-hero-in]", { opacity: 1, y: 0, duration: 1.1, ease: "expo.out", stagger: 0.07, delay: 0.45 });
+      });
+      if (frames.length > 1) {
+        let k = 0;
+        cutId = window.setInterval(() => {
+          k++;
+          setCut(k % frames.length);
+          if (k % 5 === 0) {
+            setFlash(true);
+            setTimeout(() => setFlash(false), 70);
+          }
+        }, CUT_MS);
+      }
+      tcId = window.setInterval(() => setFrame((f) => f + 1), 1000 / 24);
+    };
+    if (window.glacyReady) play();
+    else window.addEventListener("glacy:ready", play, { once: true });
+    return () => {
+      window.removeEventListener("glacy:ready", play);
+      clearInterval(cutId);
+      clearInterval(tcId);
+      ctx.revert();
+    };
+  }, [frames.length]);
 
   return (
-    <section id="top" ref={root} className="relative h-[100svh] min-h-[620px] overflow-hidden">
-      {gl && <HeroScene />}
-      {gl === false && (
-        <div className="absolute inset-0 grid place-items-center pb-[18vh]" aria-hidden>
-          <span className="ice-text font-display text-[22vw] font-bold leading-none tracking-[-0.07em]">GLACY</span>
-        </div>
-      )}
-
-      {/* scrims keep copy readable over the reflective floor */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[45%] bg-gradient-to-t from-bg via-bg/70 to-transparent" />
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-bg/80 to-transparent" />
-
-      <div className="absolute inset-x-0 top-24 mx-auto hidden max-w-[3200px] justify-between px-10 md:flex">
-        <span data-hero-in className="eyebrow">On YouTube since 2024</span>
-        <span data-hero-in className="eyebrow">Edits · Vlogs · Real life</span>
+    <section id="top" ref={root} className="relative h-[100svh] min-h-[640px] overflow-hidden bg-black">
+      {/* montage */}
+      <div className="absolute inset-0" aria-hidden>
+        {frames.map((v, i) => (
+          <div key={v.id} className={`absolute inset-0 ${i === cut ? "opacity-100" : "opacity-0"}`}>
+            <Image src={v.thumb} alt="" fill sizes="100vw" priority={i < 2} className={`object-cover ${i === cut ? "hero-kb" : ""}`} />
+          </div>
+        ))}
+        <div className={`absolute inset-0 bg-white transition-opacity duration-75 ${flash ? "opacity-20" : "opacity-0"}`} />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-black/35 to-black/85" />
+        <div className="hero-scan absolute inset-0" />
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 mx-auto grid max-w-[3200px] gap-8 px-5 pb-10 md:grid-cols-12 md:items-end md:px-[clamp(40px,3.5vw,120px)] md:pb-14">
+      {/* monitor chrome: safe-frame corners, timecode, rec */}
+      <div className="pointer-events-none absolute inset-[clamp(16px,2.5vw,40px)] top-24 bottom-[calc(var(--dock)+24px)]" aria-hidden>
+        {["left-0 top-0 border-l border-t", "right-0 top-0 border-r border-t", "left-0 bottom-0 border-l border-b", "right-0 bottom-0 border-r border-b"].map((c) => (
+          <span key={c} className={`absolute h-7 w-7 border-white/60 ${c}`} />
+        ))}
+        <div className="absolute left-5 top-4 flex items-center gap-3 font-display text-[11px] uppercase tracking-[0.2em] text-white/80">
+          <span className="rec-dot h-2 w-2 rounded-full bg-red-500" /> Program · Seq 01
+        </div>
+        <div className="absolute right-5 top-4 font-display text-[13px] tabular-nums tracking-[0.12em] text-white/90">{tc(frame)}</div>
+        <div className="absolute right-5 bottom-4 hidden font-display text-[10px] uppercase tracking-[0.2em] text-white/60 md:block">
+          Clip {String(cut + 1).padStart(2, "0")} / {String(Math.max(frames.length, 1)).padStart(2, "0")}
+        </div>
+      </div>
+
+      {/* giant wordmark, inverting over the footage */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-[37%] -translate-y-1/2 select-none text-center font-display text-[clamp(96px,min(24.5vw,38vh),620px)] font-bold leading-[0.8] tracking-[-0.075em] text-white mix-blend-difference">
+        {"GLACY".split("").map((l, i) => (
+          <span key={i} className="inline-block overflow-hidden align-top">
+            <span data-letter className="inline-block">{l}</span>
+          </span>
+        ))}
+      </div>
+
+      <div className="absolute inset-x-0 bottom-[calc(var(--dock)+clamp(40px,6vh,72px))] mx-auto grid max-w-[3200px] gap-8 px-5 md:grid-cols-12 md:items-end md:px-[clamp(40px,3.5vw,120px)]">
         <div className="md:col-span-7">
-          <p data-hero-in className="eyebrow mb-4 flex items-center gap-3">
+          <p data-hero-in className="eyebrow mb-4 flex items-center gap-3 !text-white/70">
             <span className="h-1.5 w-1.5 rounded-full bg-ice shadow-[0_0_12px_#9fd8ff]" />
             Independent creator
           </p>
-          <h1 data-hero-in className="font-display text-[clamp(40px,min(6.4vw,12vh),190px)] font-bold uppercase leading-[0.88] tracking-[-0.055em]">
+          <h1 data-hero-in className="font-display text-[clamp(38px,min(5.4vw,10vh),150px)] font-bold uppercase leading-[0.88] tracking-[-0.055em]">
             Creating what <br className="hidden sm:block" />
             <span className="ice-text">I love.</span>
           </h1>
         </div>
-        <div className="md:col-span-5 md:justify-self-end md:max-w-md">
-          <p data-hero-in className="mb-7 text-[15px] leading-relaxed text-muted md:text-base">
+        <div className="md:col-span-5 md:max-w-md md:justify-self-end">
+          <p data-hero-in className="mb-7 text-[15px] leading-relaxed text-white/70 md:text-base">
             I make videos, cut edits until they hit right and film the moments in between. No agency, no script, just stuff I care about.
           </p>
           <div data-hero-in className="flex flex-wrap gap-3">
@@ -84,16 +127,6 @@ export default function Hero() {
           </div>
         </div>
       </div>
-
-      <a
-        href="#work"
-        data-hero-in
-        className="absolute bottom-10 left-1/2 hidden -translate-x-1/2 flex-col items-center gap-3 md:flex lg:bottom-14"
-        aria-label="Scroll to latest videos"
-      >
-        <span className="eyebrow !text-[10px]">Scroll</span>
-        <span className="scroll-line relative h-14 w-px overflow-hidden bg-line" />
-      </a>
     </section>
   );
 }

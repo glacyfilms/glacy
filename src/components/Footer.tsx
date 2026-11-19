@@ -9,7 +9,7 @@ export default function Footer() {
   const toTop = () => (window.glacyScroll ? window.glacyScroll.scrollTo(0, { duration: 2 }) : window.scrollTo({ top: 0, behavior: "smooth" }));
 
   return (
-    <footer className="relative overflow-hidden border-t border-line pt-24 md:pt-32">
+    <footer id="outro" className="relative overflow-hidden border-t border-line pt-24 md:pt-32">
       <div className="pointer-events-none absolute left-1/2 top-0 h-[600px] w-[900px] -translate-x-1/2 rounded-full bg-ice-deep/10 blur-[140px]" />
       <div className="relative mx-auto max-w-[3200px] px-5 md:px-[clamp(40px,3.5vw,120px)]">
         <div className="grid gap-14 md:grid-cols-12">
