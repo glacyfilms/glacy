@@ -7,13 +7,6 @@ body {
   overflow-x: clip;
 }
 
-/* height of the docked edit timeline; it only exists on desktop */
-:root { --dock: 0px; }
-@media (min-width: 1024px) {
-  :root { --dock: 104px; }
-  body { padding-bottom: var(--dock); }
-}
-
 @theme {
   --color-bg: #050506;
   --color-surface: #0c0d0f;

@@ -4,8 +4,11 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { gsap } from "gsap";
 import Magnetic from "./Magnetic";
-import { toTimecode as tc } from "./EditDock";
 import { CHANNEL_URL, type Video } from "@/lib/youtube";
+
+// frame count -> HH:MM:SS:FF at 24fps
+const tc = (f: number) =>
+  [Math.floor(f / 86400), Math.floor(f / 1440) % 60, Math.floor(f / 24) % 60, f % 24].map((x) => String(x).padStart(2, "0")).join(":");
 
 const CUT_MS = 520; // one cut roughly every half second, like a fast edit
 
@@ -74,7 +77,7 @@ export default function Hero({ videos }: { videos: Video[] }) {
       </div>
 
       {/* monitor chrome: safe-frame corners, timecode, rec */}
-      <div className="pointer-events-none absolute inset-[clamp(16px,2.5vw,40px)] top-24 bottom-[calc(var(--dock)+24px)]" aria-hidden>
+      <div className="pointer-events-none absolute inset-[clamp(16px,2.5vw,40px)] top-24 bottom-[24px]" aria-hidden>
         {["left-0 top-0 border-l border-t", "right-0 top-0 border-r border-t", "left-0 bottom-0 border-l border-b", "right-0 bottom-0 border-r border-b"].map((c) => (
           <span key={c} className={`absolute h-7 w-7 border-white/60 ${c}`} />
         ))}
@@ -96,7 +99,7 @@ export default function Hero({ videos }: { videos: Video[] }) {
         ))}
       </div>
 
-      <div className="absolute inset-x-0 bottom-[calc(var(--dock)+clamp(40px,6vh,72px))] mx-auto grid max-w-[3200px] gap-8 px-5 md:grid-cols-12 md:items-end md:px-[clamp(40px,3.5vw,120px)]">
+      <div className="absolute inset-x-0 bottom-[clamp(40px,6vh,72px)] mx-auto grid max-w-[3200px] gap-8 px-5 md:grid-cols-12 md:items-end md:px-[clamp(40px,3.5vw,120px)]">
         <div className="md:col-span-7">
           <p data-hero-in className="eyebrow mb-4 flex items-center gap-3 !text-white/70">
             <span className="h-1.5 w-1.5 rounded-full bg-ice shadow-[0_0_12px_#9fd8ff]" />

@@ -6,7 +6,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useTexture } from "@react-three/drei";
 import { Bloom, ChromaticAberration, EffectComposer, Vignette } from "@react-three/postprocessing";
 import { AnimatePresence, motion } from "framer-motion";
-import type { Video } from "@/lib/youtube";
+import { CHANNEL_URL, type Video } from "@/lib/youtube";
 
 const GAP = 34; // distance between universes along the flight path
 const CARD_H = 4.2;
@@ -338,35 +338,49 @@ function Card({ video, color, index, onPlay }: { video: Video; color: string; in
   );
 }
 
-function Rig({ count, onIndex }: { count: number; onIndex: (i: number, between: boolean) => void }) {
+// where the camera starts: pulled far back and above, looking down at the hero galaxy
+const OPENING = { x: 0, y: 3.4, z: 46 };
+const HERO_POS: [number, number, number] = [0, 1.2, -2];
+const HERO_AIM = new THREE.Vector3(0, 1.2 + 6.5, -2);
+const look = new THREE.Vector3();
+
+function Rig({ count, onPhase }: { count: number; onPhase: (phase: string) => void }) {
   const { camera, size } = useThree();
-  const last = useRef({ z: camera.position.z, i: -1, between: false });
+  const last = useRef({ z: camera.position.z, phase: "" });
   // the effect keeps a reference to this vector, so mutating it per frame is enough
   const caOffset = useMemo(() => new THREE.Vector2(0.0004, 0.0004), []);
   useFrame((_, dt) => {
-    const seg = easeSeg(shared.progress * (count - 1));
+    const seg = easeSeg(shared.progress * count);
     const wide = size.width > size.height;
     // desktop: card sits right of the copy; phones: card sits above it
     const ox = wide ? -2.1 : 0;
     const oy = wide ? 0 : -1.0;
-    const tx = pathX(seg) + ox + shared.pointer.x * 0.4;
-    const ty = pathY(seg) + oy + shared.pointer.y * 0.25;
-    const tz = pathZ(seg) + 8.5;
+    let tx = pathX(seg) + ox + shared.pointer.x * 0.4;
+    let ty = pathY(seg) + oy + shared.pointer.y * 0.25;
+    let tz = pathZ(seg) + 8.5;
+    // the dive: one continuous move from the wide shot, through the galaxy core, into universe 01
+    const dive = Math.min(seg, 1);
+    if (dive < 1) {
+      tx = THREE.MathUtils.lerp(OPENING.x + shared.pointer.x * 0.8, tx, dive);
+      ty = THREE.MathUtils.lerp(OPENING.y + shared.pointer.y * 0.5, ty, dive);
+      tz = THREE.MathUtils.lerp(OPENING.z, tz, dive);
+    }
     camera.position.x = THREE.MathUtils.damp(camera.position.x, tx, 5, dt);
     camera.position.y = THREE.MathUtils.damp(camera.position.y, ty, 5, dt);
     camera.position.z = THREE.MathUtils.damp(camera.position.z, tz, 5, dt);
-    camera.lookAt(camera.position.x, camera.position.y, camera.position.z - 10);
+    // opening: aim above the hero galaxy so it floats under the headline; blend to straight ahead as you dive
+    look.set(camera.position.x, camera.position.y, camera.position.z - 10).lerp(HERO_AIM, 1 - dive);
+    camera.lookAt(look);
 
     shared.vel = Math.abs(camera.position.z - last.current.z) / Math.max(dt, 1e-3);
     last.current.z = camera.position.z;
     caOffset.setScalar(0.0003 + Math.min(shared.vel * 0.00005, 0.0025));
 
     const i = Math.round(seg);
-    const between = Math.abs(seg - i) > 0.18;
-    if (i !== last.current.i || between !== last.current.between) {
-      last.current.i = i;
-      last.current.between = between;
-      onIndex(i, between);
+    const phase = seg < 0.2 ? "intro" : seg > 0.32 && seg < 0.72 ? "dive" : i >= 1 && Math.abs(seg - i) <= 0.18 ? `u${i}` : "";
+    if (phase !== last.current.phase) {
+      last.current.phase = phase;
+      onPhase(phase);
     }
   });
   return (
@@ -389,7 +403,7 @@ const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day
 /** Scroll-driven flight through a galaxy; every video is its own universe. */
 export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay: (v: Video) => void }) {
   const outer = useRef<HTMLDivElement>(null);
-  const [state, setState] = useState({ i: 0, between: false });
+  const [phase, setPhase] = useState("intro");
   const [inView, setInView] = useState(false);
   const count = videos.length;
   const low = useMemo(
@@ -424,16 +438,21 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
     const el = outer.current;
     if (!el) return;
     const top = el.getBoundingClientRect().top + window.scrollY;
-    const y = top + (el.offsetHeight - window.innerHeight) * (i / Math.max(count - 1, 1));
+    const y = top + (el.offsetHeight - window.innerHeight) * (i / count);
     if (window.glacyScroll) window.glacyScroll.scrollTo(y, { duration: 1.6 });
     else window.scrollTo({ top: y, behavior: "smooth" });
   };
 
-  const v = videos[state.i] ?? videos[0];
-  const color = COLORS[state.i % COLORS.length];
+  const ui = phase.startsWith("u") ? Number(phase.slice(1)) : 0; // universe number, 1-based
+  const v = ui ? videos[ui - 1] : undefined;
+  const color = COLORS[(ui - 1 + COLORS.length) % COLORS.length];
+  const latest = videos[0];
+  const show = (on: boolean) => `transition-all duration-700 ease-out-expo ${on ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0 translate-y-4"}`;
 
   return (
-    <div ref={outer} className="relative" style={{ height: `${count * 85 + 40}svh` }}>
+    <div ref={outer} className="relative" style={{ height: `${(count + 1) * 85 + 40}svh` }}>
+      {/* nav target for "Work": where universe 01 begins */}
+      <div id="work" className="absolute inset-x-0" style={{ top: `calc((100% - 100svh) * ${1 / count})` }} />
       <div className="sticky top-0 h-[100svh] overflow-hidden bg-bg">
         <Canvas
           dpr={[1, low ? 1.25 : 1.75]}
@@ -446,27 +465,77 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
           <Sky />
           <Stars count={low ? 2500 : 7000} length={count * GAP} />
           <Warp length={count * GAP} />
-          {videos.map((video, i) => (
-            <group key={video.id}>
-              <group
-                position={[pathX(i) + (i % 2 ? -5 : 5), pathY(i) - 2, pathZ(i) - 16]}
-                rotation={[0.55 + (i % 3) * 0.2, i * 0.9, (i % 2 ? 0.35 : -0.35)]}
-              >
-                <Galaxy tint={COLORS[i % COLORS.length]} stars={low ? 5000 : 16000} seed={i} />
+          {/* the opening shot's galaxy: huge, tilted toward the camera; the dive goes through its core */}
+          <group position={HERO_POS} rotation={[1.28, 0.4, -0.1]} scale={1.15}>
+            <Galaxy tint="#9fd8ff" stars={low ? 9000 : 28000} seed={0} />
+          </group>
+          {videos.map((video, k) => {
+            const i = k + 1;
+            return (
+              <group key={video.id}>
+                <group
+                  position={[pathX(i) + (i % 2 ? -5 : 5), pathY(i) - 2, pathZ(i) - 16]}
+                  rotation={[0.55 + (i % 3) * 0.2, i * 0.9, (i % 2 ? 0.35 : -0.35)]}
+                >
+                  <Galaxy tint={COLORS[k % COLORS.length]} stars={low ? 5000 : 16000} seed={i} />
+                </group>
+                <Suspense fallback={null}>
+                  <Card video={video} color={COLORS[k % COLORS.length]} index={i} onPlay={onPlay} />
+                </Suspense>
               </group>
-              <Suspense fallback={null}>
-                <Card video={video} color={COLORS[i % COLORS.length]} index={i} onPlay={onPlay} />
-              </Suspense>
-            </group>
-          ))}
-          <Rig count={count} onIndex={(i, between) => setState({ i, between })} />
+            );
+          })}
+          <Rig count={count} onPhase={setPhase} />
         </Canvas>
 
-        {/* overlay: what universe you're in */}
         <div className="pointer-events-none absolute inset-0 mx-auto max-w-[3200px] px-5 md:px-[clamp(40px,3.5vw,120px)]">
+          {/* opening shot */}
+          <div className={`absolute inset-x-5 top-[15%] text-center md:inset-x-0 ${show(phase === "intro")}`}>
+            <p className="mx-auto mb-5 w-fit rounded-[4px] bg-ice px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-bg">
+              Independent creator
+            </p>
+            <h1 className="font-display text-[clamp(44px,6.6vw,150px)] font-bold leading-[0.9] tracking-[-0.055em] [text-shadow:0_6px_40px_rgba(0,0,0,0.7)]">
+              Creating what <span className="ice-text">I love.</span>
+            </h1>
+          </div>
+          {latest && (
+            <button
+              onClick={() => onPlay(latest)}
+              className={`absolute left-[54%] top-[56%] hidden w-[230px] rounded-md border border-white/15 bg-black/35 p-3 text-left backdrop-blur-md md:block ${show(phase === "intro")} ${phase === "intro" ? "pointer-events-auto" : ""}`}
+            >
+              <span className="absolute -left-10 top-4 h-px w-9 bg-ice/70" />
+              <span className="absolute -left-12 top-[11px] h-3 w-3 rounded-full border border-ice" />
+              <span className="mb-2 inline-block rounded-[3px] bg-ice px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-bg">Latest drop</span>
+              <span className="block truncate font-display text-sm font-semibold">{latest.title}</span>
+              <span className="mt-1 block font-mono text-[10px] uppercase tracking-[0.14em] text-white/55">{fmtDate(latest.published)} · Play ▶</span>
+            </button>
+          )}
+          <div className={`absolute bottom-[36px] left-5 md:left-[clamp(40px,3.5vw,120px)] ${show(phase === "intro")} ${phase === "intro" ? "pointer-events-auto" : ""}`}>
+            <p className="mb-6 font-mono text-[11px] uppercase leading-[1.7] tracking-[0.14em] text-white/65">
+              Videos, edits and vlogs.<br />Cut frame by frame.<br />Uploading since 2024.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <a href="#work" className="btn btn-solid">Explore my work</a>
+              <a href={CHANNEL_URL} target="_blank" rel="noopener noreferrer" className="btn btn-ghost">Watch on YouTube</a>
+            </div>
+          </div>
+          <p className={`absolute bottom-[40px] right-5 hidden items-center gap-3 font-mono text-[10px] uppercase tracking-[0.18em] text-white/60 md:right-[clamp(40px,3.5vw,120px)] md:flex ${show(phase === "intro")}`}>
+            <span className="grid h-6 w-6 place-items-center rounded-full border border-white/40">↓</span> Scroll to explore
+          </p>
+
+          {/* mid-dive */}
+          <div className="absolute inset-x-5 top-1/2 -translate-y-1/2 text-center"><div className={show(phase === "dive")}>
+            <p className="mx-auto mb-5 w-fit rounded-[4px] bg-ice px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-bg">Latest releases</p>
+            <p className="font-display text-[clamp(36px,5vw,110px)] font-bold leading-[0.95] tracking-[-0.05em] [text-shadow:0_6px_40px_rgba(0,0,0,0.8)]">
+              Every Short is its<br />own universe.
+            </p>
+            <p className="mt-5 text-white/65">Scroll through my latest releases.</p>
+          </div></div>
+
+          {/* universe */}
           <div className="absolute inset-x-5 bottom-10 md:inset-x-auto md:bottom-auto md:top-1/2 md:max-w-[min(560px,40vw)] md:-translate-y-1/2">
             <AnimatePresence mode="wait">
-              {!state.between && v && (
+              {v && (
                 <motion.div
                   key={v.id}
                   initial={{ opacity: 0, y: 24, filter: "blur(8px)" }}
@@ -474,17 +543,12 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
                   exit={{ opacity: 0, y: -16, filter: "blur(8px)" }}
                   transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
                 >
-                  <p className="eyebrow mb-4 flex items-center gap-3" style={{ color }}>
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: color, boxShadow: `0 0 12px ${color}` }} />
-                    Universe {String(state.i + 1).padStart(2, "0")} · Sector {sector(v.id)}
+                  <p className="mb-4 flex w-fit items-center gap-2 rounded-[4px] px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-bg" style={{ background: color }}>
+                    Universe {String(ui).padStart(2, "0")} · Sector {sector(v.id)}
                   </p>
                   <h3 className="font-display text-[clamp(30px,4vw,76px)] font-bold leading-[0.95] tracking-[-0.045em] [text-shadow:0_4px_30px_rgba(0,0,0,0.8)]">
                     {v.title}
                   </h3>
-                  <p className="eyebrow mt-4 !text-[10px]">
-                    {fmtDate(v.published)}
-                    {state.i === 0 && <span style={{ color }}> · Newest</span>}
-                  </p>
                   <div className="pointer-events-auto mt-7 flex flex-wrap gap-3">
                     <button onClick={() => onPlay(v)} className="btn btn-solid">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M8 5v14l11-7z" /></svg>
@@ -497,36 +561,63 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
             </AnimatePresence>
           </div>
 
+          {/* glass data card, like a readout next to the shot */}
+          <AnimatePresence>
+            {v && (
+              <motion.ul
+                key={v.id}
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 24 }}
+                transition={{ duration: 0.6, delay: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                className="pointer-events-auto absolute bottom-[28px] left-[clamp(40px,3.5vw,120px)] hidden w-[300px] divide-y divide-white/10 rounded-md border border-white/15 bg-black/35 font-mono text-[10px] uppercase tracking-[0.12em] text-white/75 backdrop-blur-md lg:block"
+              >
+                {[
+                  ["Format", v.isShort ? "Short · 9:16" : "Video · 16:9"],
+                  ["Published", fmtDate(v.published)],
+                  ["Tags", v.tags.slice(0, 3).join(" ") || "—"],
+                ].map(([k, val], n) => (
+                  <li key={k} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                    <span className="text-white/40">0{n + 1}</span>
+                    <span className="flex-1">{k}</span>
+                    <span className="max-w-[150px] truncate text-right text-white">{val}</span>
+                  </li>
+                ))}
+                <li>
+                  <a href={`${CHANNEL_URL}/shorts`} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between px-3 py-2.5 hover:bg-white/5">
+                    <span className="text-white/40">04</span>
+                    <span className="flex-1 pl-3">View all videos</span>
+                    <span>↗</span>
+                  </a>
+                </li>
+              </motion.ul>
+            )}
+          </AnimatePresence>
+
           {/* universe map: jump to any video */}
-          <nav aria-label="Jump to video" className="pointer-events-auto absolute right-3 top-1/2 flex -translate-y-1/2 flex-col gap-1 md:right-[clamp(20px,2vw,60px)]">
-            {videos.map((x, i) => (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 md:right-[clamp(20px,2vw,60px)]">
+          <nav aria-label="Jump to video" className={`flex flex-col gap-1 ${show(phase !== "intro")} ${phase !== "intro" ? "pointer-events-auto" : ""}`}>
+            {videos.map((x, k) => (
               <button
                 key={x.id}
-                onClick={() => jump(i)}
+                onClick={() => jump(k + 1)}
                 aria-label={`Go to “${x.title}”`}
-                aria-current={i === state.i}
+                aria-current={k + 1 === ui}
                 className="group flex h-6 w-6 items-center justify-center"
               >
                 <span
                   className="block rounded-full transition-all duration-500"
                   style={{
-                    width: i === state.i ? 10 : 5,
-                    height: i === state.i ? 10 : 5,
-                    background: i === state.i ? COLORS[i % COLORS.length] : "rgba(237,238,240,0.35)",
-                    boxShadow: i === state.i ? `0 0 14px ${COLORS[i % COLORS.length]}` : "none",
+                    width: k + 1 === ui ? 10 : 5,
+                    height: k + 1 === ui ? 10 : 5,
+                    background: k + 1 === ui ? COLORS[k % COLORS.length] : "rgba(237,238,240,0.35)",
+                    boxShadow: k + 1 === ui ? `0 0 14px ${COLORS[k % COLORS.length]}` : "none",
                   }}
                 />
               </button>
             ))}
           </nav>
-
-          <p
-            className={`eyebrow absolute left-1/2 top-24 hidden md:block -translate-x-1/2 whitespace-nowrap !text-[10px] transition-opacity duration-700 ${
-              state.i === 0 && !state.between ? "opacity-100" : "opacity-0"
-            }`}
-          >
-            Scroll to travel ↓
-          </p>
+          </div>
         </div>
       </div>
     </div>

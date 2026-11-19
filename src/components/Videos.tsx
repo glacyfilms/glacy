@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { AnimatePresence, motion } from "framer-motion";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Magnetic from "./Magnetic";
+import Hero from "./Hero";
 
 const Multiverse = dynamic(() => import("./Multiverse"), { ssr: false });
 import { CHANNEL_URL, type Video } from "@/lib/youtube";
@@ -188,7 +189,19 @@ export default function Videos({ videos }: { videos: Video[] }) {
   // staggered vertical offsets give the row its floating, editorial rhythm
   const offsets = ["md:mt-0", "md:mt-24", "md:mt-10", "md:mt-32", "md:mt-4"];
 
+  if (journey && latest)
+    return (
+      <>
+        <section id="top" aria-label="GLACY — latest releases" className="relative">
+          <Multiverse videos={videos.slice(0, 10)} onPlay={setActive} />
+        </section>
+        <PlayerModal video={active} onClose={close} />
+      </>
+    );
+
   return (
+    <>
+    <Hero videos={videos} />
     <section id="work" className="relative mx-auto max-w-[3200px] px-5 py-28 md:px-[clamp(40px,3.5vw,120px)] md:py-40">
       <div className="mb-14 flex flex-col gap-8 md:mb-20 md:flex-row md:items-end md:justify-between">
         <div>
@@ -219,10 +232,6 @@ export default function Videos({ videos }: { videos: Video[] }) {
           <p className="font-display text-3xl font-bold tracking-[-0.03em]">The feed is taking a breather.</p>
           <p className="mt-3 text-muted">YouTube didn&apos;t answer just now. Everything is still on the channel.</p>
           <a href={CHANNEL_URL} target="_blank" rel="noopener noreferrer" className="btn btn-solid mt-8">Go to the channel</a>
-        </div>
-      ) : journey ? (
-        <div className="-mx-5 md:-mx-[clamp(40px,3.5vw,120px)]">
-          <Multiverse videos={videos.slice(0, 10)} onPlay={setActive} />
         </div>
       ) : (
         <>
@@ -267,5 +276,6 @@ export default function Videos({ videos }: { videos: Video[] }) {
 
       <PlayerModal video={active} onClose={close} />
     </section>
+    </>
   );
 }
