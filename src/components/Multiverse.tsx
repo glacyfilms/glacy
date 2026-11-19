@@ -18,12 +18,18 @@ const easeSeg = (seg: number) => {
   return i + (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 };
 
-const shared = { progress: 0, pointer: { x: 0, y: 0 }, hover: false };
+const shared = { progress: 0, pointer: { x: 0, y: 0 }, hover: false, mode: 0, t: 0 };
+
+// transition styles, one per scroll step (see the shader)
+const VORTEX = 0, SHATTER = 1, FLIP = 2, WAVE = 3, RAIN = 4, WARP = 5, COLLAPSE = 6;
+const SEQUENCE = [VORTEX, SHATTER, FLIP, WAVE, RAIN, WARP, COLLAPSE, VORTEX, FLIP];
+// the last step always warps back out to the galaxy
+const modeFor = (step: number, steps: number) => (step === steps - 1 ? WARP : SEQUENCE[step % SEQUENCE.length]);
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 const PASSIONS = ["Video editing", "Football", "Content creation", "Vlogging", "Creative experiments"];
 
-/** One cloud of stars. Each scroll step it flows from one shape to the next through a swirling vortex. */
-function Morph({ shapes, count }: { shapes: React.RefObject<Shape[]>; count: number }) {
+/** One cloud of stars. Each scroll step it flows to the next shape with its own transition. */
+function Morph({ shapes, centers, count }: { shapes: React.RefObject<Shape[]>; centers: React.RefObject<[number, number][]>; count: number }) {
   const { camera, viewport } = useThree();
   const group = useRef<THREE.Group>(null);
   const shown = useRef({ i: -1, version: -1 });
@@ -44,23 +50,77 @@ function Morph({ shapes, count }: { shapes: React.RefObject<Shape[]>; count: num
       toneMapped: false,
       blending: THREE.AdditiveBlending,
       vertexColors: true,
-      uniforms: { uT: { value: 0 }, uTime: { value: 0 }, uPixel: { value: 1 }, uMouse: { value: new THREE.Vector3(99, 99, 0) } },
+      uniforms: {
+        uT: { value: 0 },
+        uMode: { value: 0 },
+        uTime: { value: 0 },
+        uPixel: { value: 1 },
+        uMouse: { value: new THREE.Vector3(99, 99, 0) },
+        uC0: { value: new THREE.Vector2() }, // centre of the shape we leave
+        uC1: { value: new THREE.Vector2() }, // centre of the shape we arrive at
+      },
       vertexShader: /* glsl */ `
-        uniform float uT, uTime, uPixel; uniform vec3 uMouse;
+        uniform float uT, uMode, uTime, uPixel; uniform vec3 uMouse; uniform vec2 uC0, uC1;
         attribute vec3 aTo, aColTo; attribute float aRand;
         varying vec3 vColor; varying float vA;
+        const float PI = 3.14159265;
+        mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+        float inOut(float x) { return x < 0.5 ? 4.0 * x * x * x : 1.0 - pow(-2.0 * x + 2.0, 3.0) / 2.0; }
+        float backOut(float x) { float c = 1.9; return 1.0 + (c + 1.0) * pow(x - 1.0, 3.0) + c * pow(x - 1.0, 2.0); }
+        float h1(float n) { return fract(sin(n) * 43758.5453); }
+
         void main() {
-          // every star leaves on its own beat, so shapes dissolve instead of sliding
-          float t = smoothstep(aRand * 0.35, aRand * 0.35 + 0.65, uT);
-          float k = sin(t * 3.14159);
-          vec3 p = mix(position, aTo, t);
-          // mid-flight: a vortex around the centre plus flowing turbulence
-          float ang = k * (1.4 + aRand * 1.8);
-          p.xz = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * p.xz;
-          p += k * 2.0 * vec3(
-            sin(p.y * 0.7 + uTime * 0.7 + aRand * 6.28),
-            cos(p.x * 0.6 - uTime * 0.5 + aRand * 12.0),
-            sin(p.x * 0.4 + p.y * 0.4 + aRand * 20.0));
+          vec3 A = position, B = aTo;
+          int m = int(uMode + 0.5);
+          vec2 c = mix(uC0, uC1, inOut(clamp(uT, 0.0, 1.0)));
+          // when each star leaves: random for organic modes, left-to-right sweeps for wipes
+          float sweep = clamp(mix(A.x, B.x, 0.5) / 18.0 + 0.5, 0.0, 1.0);
+          float delay = (m == FLIP_ || m == WAVE_) ? sweep * 0.45 + aRand * 0.05
+                      : (m == RAIN_) ? clamp(A.x / 18.0 + 0.5, 0.0, 1.0) * 0.3 + aRand * 0.12
+                      : aRand * 0.3;
+          float span = 1.0 - ((m == FLIP_ || m == WAVE_) ? 0.5 : (m == RAIN_) ? 0.42 : 0.3);
+          float t = clamp((uT - delay) / span, 0.0, 1.0);
+          float e = inOut(t);
+          float k = sin(t * PI);               // 0 at rest, 1 mid-flight
+          float fade = 1.0;
+          vec3 p;
+
+          if (m == VORTEX_) {
+            // spiral down the drain into the next shape
+            p = mix(A, B, e);
+            p.xz = rot(k * (1.6 + aRand * 2.0)) * (p.xz - vec2(c.x, 0.0)) + vec2(c.x, 0.0);
+            p += k * 1.8 * vec3(sin(p.y * 0.7 + uTime * 0.7 + aRand * 6.28), cos(p.x * 0.6 - uTime * 0.5 + aRand * 12.0), sin(p.x * 0.4 + aRand * 20.0));
+          } else if (m == SHATTER_) {
+            // burst outward like glass, hang, then snap into the new shape with overshoot
+            vec3 dir = normalize(vec3(A.xy - uC0, 0.0) + vec3(h1(aRand * 91.0) - 0.5, h1(aRand * 37.0) - 0.5, h1(aRand * 13.0) - 0.5) * 2.5 + 1e-3);
+            vec3 far = A + dir * (2.0 + aRand * 4.5);
+            far.xy = rot((aRand - 0.5) * 1.2) * (far.xy - uC0) + uC0;
+            p = t < 0.4 ? mix(A, far, 1.0 - pow(1.0 - t / 0.4, 3.0)) : mix(far, B, backOut((t - 0.4) / 0.6));
+          } else if (m == FLIP_) {
+            // a full card spin that ripples across the image
+            p = mix(A, B, e);
+            p.xz = rot(e * 2.0 * PI) * (p.xz - vec2(c.x, 0.0)) + vec2(c.x, 0.0);
+            p.z += k * 1.5;
+          } else if (m == WAVE_) {
+            // a crest sweeps across and rebuilds the picture behind it
+            p = mix(A, B, e);
+            p.y += k * (2.4 + aRand * 1.2);
+            p.z += k * (3.0 + aRand * 2.0);
+          } else if (m == RAIN_) {
+            // the picture falls away like a curtain, the next one drops in from above
+            if (t < 0.5) { float s = t / 0.5; p = A + vec3(sin(aRand * 40.0) * 0.4 * s, -16.0 * s * s, 0.0); fade = 1.0 - s * s; }
+            else { float s = (t - 0.5) / 0.5; float r = 1.0 - s; p = B + vec3(0.0, 16.0 * r * r * r, 0.0); fade = 1.0 - r * r; }
+          } else if (m == WARP_) {
+            // stars stream past the camera; the next shape arrives from deep space
+            if (t < 0.5) { float s = t / 0.5; p = A; p.xy = mix(p.xy, p.xy * 2.2, s * s); p.z += s * s * 24.0; fade = 1.0 - s; }
+            else { float s = (t - 0.5) / 0.5; float r = 1.0 - s; p = B; p.z -= r * r * 70.0; fade = s; }
+          } else {
+            // collapse into a single point of light, then bloom out
+            vec3 core = vec3(c, 0.0);
+            if (t < 0.5) { float s = pow(t / 0.5, 2.0); p = mix(A, core, s); p.xz = rot(s * 5.0) * (p.xz - core.xz) + core.xz; }
+            else { float s = (t - 0.5) / 0.5; p = mix(core, B, backOut(s)); p.xz = rot((1.0 - s) * -3.0) * (p.xz - core.xz) + core.xz; }
+          }
+
           // shapes breathe a little even when you stop scrolling
           p += 0.035 * vec3(sin(uTime * 0.9 + aRand * 50.0), cos(uTime * 1.1 + aRand * 30.0), sin(uTime * 0.7 + aRand * 10.0));
           // stars part around the cursor
@@ -68,12 +128,15 @@ function Morph({ shapes, count }: { shapes: React.RefObject<Shape[]>; count: num
           float push = 0.5 * exp(-dot(d, d) * 2.4);
           p.xy += normalize(d + 1e-4) * push;
           p.z += push * 0.8;
-          vColor = mix(color, aColTo, t) * (1.35 + push * 1.5);
+
+          vColor = mix(color, aColTo, smoothstep(0.25, 0.75, t)) * (1.35 + push * 1.5 + k * 0.6);
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * mv;
-          gl_PointSize = (1.2 + aRand * 1.6) * (1.0 + k * 1.2) * uPixel * (17.0 / -mv.z);
-          vA = 0.62 + k * 0.25;
-        }`,
+          gl_PointSize = min((1.2 + aRand * 1.6) * (1.0 + k * 1.2) * uPixel * (17.0 / max(-mv.z, 0.5)), 28.0);
+          vA = (0.62 + k * 0.25) * fade;
+        }`
+          .replace(/VORTEX_/g, String(VORTEX)).replace(/SHATTER_/g, String(SHATTER)).replace(/FLIP_/g, String(FLIP))
+          .replace(/WAVE_/g, String(WAVE)).replace(/RAIN_/g, String(RAIN)).replace(/WARP_/g, String(WARP)),
       fragmentShader: /* glsl */ `
         varying vec3 vColor; varying float vA;
         void main() {
@@ -101,6 +164,14 @@ function Morph({ shapes, count }: { shapes: React.RefObject<Shape[]>; count: num
       shown.current = { i, version };
     }
     material.uniforms.uT.value = seg - i;
+    material.uniforms.uMode.value = modeFor(i, list.length - 1);
+    const cs = centers.current;
+    if (cs?.[i + 1]) {
+      (material.uniforms.uC0.value as THREE.Vector2).set(...cs[i]);
+      (material.uniforms.uC1.value as THREE.Vector2).set(...cs[i + 1]);
+    }
+    shared.mode = material.uniforms.uMode.value;
+    shared.t = seg - i;
     material.uniforms.uTime.value = state.clock.elapsedTime;
     material.uniforms.uPixel.value = state.gl.getPixelRatio();
 
@@ -173,9 +244,16 @@ function Sky() {
 function Camera() {
   useFrame((state, dt) => {
     const c = state.camera;
-    c.position.x = THREE.MathUtils.damp(c.position.x, shared.pointer.x * 0.6, 2.5, dt);
-    c.position.y = THREE.MathUtils.damp(c.position.y, shared.pointer.y * 0.4, 2.5, dt);
+    const k = Math.sin(Math.min(Math.max(shared.t, 0), 1) * Math.PI); // 0 at rest, 1 mid-transition
+    const m = shared.mode;
+    const z = 16 + (m === SHATTER ? 4 : m === WARP ? -5 : m === COLLAPSE ? -3 : 0) * k;
+    const x = shared.pointer.x * 0.6 + (m === FLIP ? 3.5 * k : 0);
+    const y = shared.pointer.y * 0.4 + (m === WAVE ? -1.2 * k : m === RAIN ? 1.5 * k : 0);
+    c.position.x = THREE.MathUtils.damp(c.position.x, x, 3, dt);
+    c.position.y = THREE.MathUtils.damp(c.position.y, y, 3, dt);
+    c.position.z = THREE.MathUtils.damp(c.position.z, z, 3, dt);
     c.lookAt(0, 0, 0);
+    c.rotateZ((m === VORTEX ? 0.22 : m === COLLAPSE ? -0.15 : 0) * k); // roll with the spin
   });
   return null;
 }
@@ -187,6 +265,7 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
   const [phase, setPhase] = useState(0);
   const [inView, setInView] = useState(true);
   const shapes = useRef<Shape[]>([]);
+  const centers = useRef<[number, number][]>([]);
   const shorts = useMemo(() => videos.slice(0, 6), [videos]);
 
   const scenes: Scene[] = useMemo(
@@ -222,6 +301,11 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
     list.version = 0;
     const bump = () => { if (alive) list.version = (list.version ?? 0) + 1; };
     shapes.current = list;
+    // where each scene's shape sits, so spins and collapses pivot on the shape, not the screen
+    const vy = wide ? 0 : (visH * 0.17) / k;
+    centers.current = scenes.map((s) =>
+      s.kind === "video" ? [side, vy] : s.kind === "about" || s.kind === "connect" ? [side, lift] : s.kind === "name" ? [0, 0.3] : [0, 0]
+    );
 
     list[last] = galaxy(count, 11);
     list[scenes.findIndex((s) => s.kind === "about")] = sphere(count, size(3.4, 0.15), side, lift);
@@ -338,7 +422,7 @@ export default function Multiverse({ videos, onPlay }: { videos: Video[]; onPlay
           <color attach="background" args={["#030305"]} />
           <Sky />
           <Camera />
-          <Morph shapes={shapes} count={count} />
+          <Morph shapes={shapes} centers={centers} count={count} />
           <EffectComposer multisampling={0}>
             <Bloom mipmapBlur luminanceThreshold={0.35} intensity={0.75} radius={0.75} />
             <Vignette offset={0.25} darkness={0.75} />

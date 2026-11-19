@@ -3,7 +3,6 @@ import "@fontsource-variable/space-grotesk";
 import "@fontsource-variable/inter";
 import "./globals.css";
 import SmoothScroll from "@/components/SmoothScroll";
-import Loader from "@/components/Loader";
 import Cursor from "@/components/Cursor";
 import Nav from "@/components/Nav";
 
@@ -25,7 +24,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en">
       <body className="bg-bg text-ink antialiased">
         <SmoothScroll />
-        <Loader />
         <Cursor />
         <Nav />
         {children}

@@ -269,6 +269,3 @@ html.lenis body {
   background: repeating-linear-gradient(to bottom, rgb(0 0 0 / 0.18) 0 1px, transparent 1px 3px);
   mix-blend-mode: multiply;
 }
-/* old projector flicker on the countdown */
-.leader-flicker { animation: leaderFlicker 0.18s steps(2) infinite; }
-@keyframes leaderFlicker { 50% { opacity: 0.86; } }

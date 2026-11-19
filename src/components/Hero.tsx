@@ -52,10 +52,8 @@ export default function Hero({ videos }: { videos: Video[] }) {
       }
       tcId = window.setInterval(() => setFrame((f) => f + 1), 1000 / 24);
     };
-    if (window.glacyReady) play();
-    else window.addEventListener("glacy:ready", play, { once: true });
+    play();
     return () => {
-      window.removeEventListener("glacy:ready", play);
       clearInterval(cutId);
       clearInterval(tcId);
       ctx.revert();
