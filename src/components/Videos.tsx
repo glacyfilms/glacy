@@ -2,8 +2,12 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { AnimatePresence, motion } from "framer-motion";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Magnetic from "./Magnetic";
+
+const Multiverse = dynamic(() => import("./Multiverse"), { ssr: false });
 import { CHANNEL_URL, type Video } from "@/lib/youtube";
 
 const ease = [0.16, 1, 0.3, 1] as const;
@@ -171,6 +175,14 @@ function PlayerModal({ video, onClose }: { video: Video | null; onClose: () => v
 export default function Videos({ videos }: { videos: Video[] }) {
   const [active, setActive] = useState<Video | null>(null);
   const close = useCallback(() => setActive(null), []);
+  // the 3D journey needs WebGL2 and a viewer who is fine with motion; everyone else gets the grid
+  const [journey, setJourney] = useState(false);
+  useEffect(() => {
+    let gl = false;
+    try { gl = !!document.createElement("canvas").getContext("webgl2"); } catch {}
+    setJourney(gl && !matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }, []);
+  useEffect(() => { if (journey) requestAnimationFrame(() => ScrollTrigger.refresh()); }, [journey]);
   const [latest, ...rest] = videos;
   const grid = rest.slice(0, 5);
   // staggered vertical offsets give the row its floating, editorial rhythm
@@ -207,6 +219,10 @@ export default function Videos({ videos }: { videos: Video[] }) {
           <p className="font-display text-3xl font-bold tracking-[-0.03em]">The feed is taking a breather.</p>
           <p className="mt-3 text-muted">YouTube didn&apos;t answer just now. Everything is still on the channel.</p>
           <a href={CHANNEL_URL} target="_blank" rel="noopener noreferrer" className="btn btn-solid mt-8">Go to the channel</a>
+        </div>
+      ) : journey ? (
+        <div className="-mx-5 md:-mx-[clamp(40px,3.5vw,120px)]">
+          <Multiverse videos={videos.slice(0, 10)} onPlay={setActive} />
         </div>
       ) : (
         <>
