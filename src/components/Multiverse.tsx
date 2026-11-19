@@ -259,27 +259,64 @@ function Journey({ layout, videos, first, onPlay }: { layout: React.RefObject<La
         transparent: true,
         depthWrite: false,
         toneMapped: false,
-        uniforms: { uMap: { value: null }, uOpen: { value: 0 }, uTime: { value: 0 }, uAspect: { value: 0.66 }, uTint: { value: new THREE.Color("#9fd8ff") } },
+        uniforms: {
+          uMap: { value: null }, uOpen: { value: 0 }, uFlash: { value: 0 }, uTime: { value: 0 },
+          uAspect: { value: 0.66 }, uTint: { value: new THREE.Color("#9fd8ff") },
+        },
         vertexShader: /* glsl */ `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
         fragmentShader: /* glsl */ `
-          uniform sampler2D uMap; uniform float uOpen, uTime, uAspect; uniform vec3 uTint; varying vec2 vUv;
+          uniform sampler2D uMap; uniform float uOpen, uFlash, uTime, uAspect; uniform vec3 uTint; varying vec2 vUv;
           mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+          float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float n(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+            return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
+          float fbm(vec2 p) { float v = 0.0, a = 0.5; for (int k = 0; k < 4; k++) { v += a * n(p); p *= 2.1; a *= 0.5; } return v; }
+          vec3 pic(vec2 w) { return texture2D(uMap, 0.5 + vec2(w.x * 0.5 * uAspect, w.y * 0.5)).rgb; }
           void main() {
-            vec2 q = (vUv - 0.5) * 2.0;                    // 1.0 = the portal rim
+            vec2 q = (vUv - 0.5) * 2.0 * PAD;              // 1.0 = the portal rim
             float r = length(q);
-            float edge = uOpen * 0.96;
-            // the picture spirals open: heavy twist while opening, a slow living swirl once open
-            float twist = (1.0 - uOpen) * 7.0 * (1.0 - r) + 0.25 * sin(uTime * 0.7) * (1.0 - r);
+            float th = atan(q.y, q.x);
+            float edge = uOpen * (0.96 + uFlash * 0.08);
+            // swirling energy, flowing around the rim
+            float flow = fbm(vec2(th * 2.5 + uTime * 1.6 - r * 5.0, r * 3.0 - uTime * 0.9));
+            float rimR = edge + (flow - 0.5) * 0.06;
+            float ring = exp(-pow((r - rimR) * 16.0, 2.0));
+            float core = exp(-pow((r - rimR) * 45.0, 2.0));
+            // flames licking outward off the rim
+            float flame = pow(fbm(vec2(th * 4.0 - uTime * 0.8, r * 5.0 - uTime * 2.2)), 2.5) * smoothstep(rimR, rimR + 0.04, r) * (1.0 - smoothstep(rimR + 0.05, rimR + 0.4, r));
+            float halo = exp(-max(r - rimR, 0.0) * 5.0) * step(rimR, r);
+            // the picture: spirals open, then breathes with a slow ripple; colours split near the rim
+            float twist = (1.0 - uOpen) * 7.0 * (1.0 - r) + 0.22 * sin(uTime * 0.7) * (1.0 - r);
             vec2 w = rot(twist) * q;
-            // object-fit: cover for a square thumbnail inside an ellipse of this aspect
-            vec2 uv = 0.5 + vec2(w.x * 0.5 * uAspect, w.y * 0.5);
-            vec3 img = texture2D(uMap, uv).rgb;
-            float inside = smoothstep(edge, edge - 0.06, r);
-            float rim = exp(-abs(r - edge) * 28.0) * uOpen;
-            vec3 col = img * (0.75 + 0.35 * smoothstep(0.9, 0.2, r)) + uTint * rim * 0.9;
-            gl_FragColor = vec4(col, clamp(inside * uOpen + rim * 0.6, 0.0, 1.0));
+            w += normalize(q + 1e-4) * sin(r * 26.0 - uTime * 2.4) * 0.008 * smoothstep(0.2, 0.9, r);
+            float ca = pow(r, 4.0) * 0.035;
+            vec3 img = vec3(pic(w * (1.0 + ca)).r, pic(w).g, pic(w * (1.0 - ca)).b);
+            float inside = smoothstep(edge, edge - 0.05, r);
+            img *= 0.82 + 0.3 * smoothstep(0.95, 0.15, r);
+            img = mix(img, uTint, smoothstep(0.55, 1.0, r / max(edge, 1e-3)) * 0.4); // inner glow at the rim
+            img += uTint * uFlash * 0.8;
+            vec3 glow = uTint * (ring * 1.2 + flame * 1.4 + halo * 0.35) + vec3(1.0) * core * 0.9;
+            vec3 col = img * inside + glow * (1.0 + uFlash * 1.5);
+            float a = clamp(inside + ring + flame * 0.9 + halo * 0.35 + core, 0.0, 1.0) * uOpen;
+            gl_FragColor = vec4(col, a);
             #include <colorspace_fragment>
-          }`,
+          }`.replace("PAD", "1.45"),
+      }),
+    []
+  );
+
+  const spillRef = useRef<THREE.Mesh>(null);
+  const spill = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
+        blending: THREE.AdditiveBlending,
+        uniforms: { uOpen: { value: 0 }, uTint: { value: new THREE.Color() } },
+        vertexShader: /* glsl */ `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: /* glsl */ `uniform float uOpen; uniform vec3 uTint; varying vec2 vUv;
+          void main() { vec2 q = (vUv - 0.5) * 2.0; float g = exp(-dot(q, q) * 3.0); gl_FragColor = vec4(uTint * g * uOpen * 0.55, 1.0); }`,
       }),
     []
   );
@@ -343,18 +380,26 @@ function Journey({ layout, videos, first, onPlay }: { layout: React.RefObject<La
       (surface.uniforms.uTint.value as THREE.Color).set(PORTAL_TINTS[n % PORTAL_TINTS.length]);
     }
     surface.uniforms.uOpen.value = here ? P.open : 0;
+    surface.uniforms.uFlash.value = here ? P.flash : 0;
     surface.uniforms.uTime.value = time;
     surface.uniforms.uAspect.value = L.rx / L.ry;
     if (portalRef.current) {
       portalRef.current.visible = here && P.open > 0.001;
       portalRef.current.position.set(L.px, L.py, 0.05);
-      portalRef.current.scale.set(L.rx * 2, L.ry * 2, 1);
+      portalRef.current.scale.set(L.rx * 2 * 1.45, L.ry * 2 * 1.45, 1);
+    }
+
+    spill.uniforms.uOpen.value = surface.uniforms.uOpen.value;
+    (spill.uniforms.uTint.value as THREE.Color).copy(surface.uniforms.uTint.value as THREE.Color);
+    if (spillRef.current) {
+      spillRef.current.position.set(L.px, L.ground, 0.02);
+      spillRef.current.scale.set(L.rx * 3.2, L.ry * 0.35, 1);
     }
 
     // stickman
     if (man.current) {
       man.current.visible = here && P.alpha > 0;
-      man.current.position.set(P.x, P.y, 0.4);
+      man.current.position.set(P.x, P.y + P.hipH * L.man * P.scale, 0.4);
       man.current.scale.setScalar(L.man * P.scale);
       man.current.rotation.z = -P.spin;
     }
@@ -369,6 +414,9 @@ function Journey({ layout, videos, first, onPlay }: { layout: React.RefObject<La
     <>
       <points geometry={dust.g} material={dust.m} frustumCulled={false} />
       <Line ref={groundLine} points={[[-40, 0, 0], [40, 0, 0]]} color="#9fd8ff" lineWidth={1} transparent opacity={0} toneMapped={false} />
+      <mesh ref={spillRef} material={spill}>
+        <planeGeometry args={[1, 1]} />
+      </mesh>
       <mesh
         ref={portalRef}
         material={surface}

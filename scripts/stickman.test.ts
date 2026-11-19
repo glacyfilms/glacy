@@ -15,6 +15,13 @@ for (let u = 0; u <= 1; u += 0.01) {
 assert.equal(pose(0.13, stage, 0).y, stage.ground);
 const hold = pose(0.5, stage, 0);
 assert.equal(hold.x, stage.standX); assert.ok(hold.open > 0.99);
+// the jump ends exactly at the portal centre, fully shrunk, after one full flip
 const gone = pose(0.92, stage, 0);
 assert.ok(gone.scale < 0.01 && Math.abs(gone.x - stage.px) < 1e-9 && Math.abs(gone.y - stage.py) < 1e-9);
+assert.ok(Math.abs(gone.spin - Math.PI * 2) < 1e-9);
+// mid-jump he is above both the ground and the straight line to the portal
+const mid = pose(0.79, stage, 0);
+assert.ok(mid.y > stage.ground + (stage.py - stage.ground) * 0.5 + 1);
+// lands upright
+assert.ok(Math.abs(pose(0.1, stage, 0).spin) < 1e-9);
 console.log("stickman ok");
