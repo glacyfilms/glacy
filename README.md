@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GLACY — the creator site
 
-## Getting Started
+Next.js 15 · React 19 · TypeScript · Tailwind v4 · React Three Fiber · GSAP + ScrollTrigger · Framer Motion · Lenis
 
-First, run the development server:
+## Run it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev        # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Production:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run build && npm start
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Latest videos (no setup needed)
 
-## Learn More
+The "Latest releases" section reads the channel's public YouTube feed
+(`youtube.com/feeds/videos.xml?channel_id=UCFjJn7pQZ0ZSzKw4oZN4A8A`) on the server.
+The page re-renders every 30 minutes (`revalidate = 1800` in `src/app/page.tsx`), so new uploads show up on their own.
+That only works on a host that runs the Next server, such as Vercel or `npm start`. A static export won't update.
 
-To learn more about Next.js, take a look at the following resources:
+The feed has no video lengths. To show durations, add a YouTube Data API key:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+cp .env.example .env.local
+# then set YOUTUBE_API_KEY=... (Google Cloud console → enable "YouTube Data API v3" → create an API key)
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The key is only used on the server and is never sent to the browser.
 
-## Deploy on Vercel
+## Where things live
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| File | What it does |
+| --- | --- |
+| `src/lib/youtube.ts` | Feed fetch and parse, optional durations, channel and social URLs |
+| `src/components/HeroScene.tsx` | 3D chrome wordmark, ice-dust particles, reflective floor, mouse light, post-processing |
+| `src/components/Videos.tsx` | Featured release, editorial grid, tilt cards, player modal |
+| `src/components/About.tsx` / `World.tsx` / `Social.tsx` / `Footer.tsx` | The remaining sections |
+| `src/components/SmoothScroll.tsx` | Lenis, plus every `data-reveal` / `data-split` / `data-parallax` / `data-scrub-text` animation |
+| `public/media/` | Compressed mood clips used in About, and the 3D font (`glacy-font.json`, Space Grotesk Bold, letters G L A C Y only) |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Fallbacks
+
+- No WebGL2: the hero shows a CSS gradient wordmark instead.
+- Phones and machines with 4 or fewer CPU cores: no mirror floor, fewer particles, lower resolution.
+- `prefers-reduced-motion`: no smooth scroll, no reveals, no custom cursor, and the 3D logo holds still.
+- The hero canvas stops rendering once it scrolls out of view.
+
+## Swap in your own footage
+
+The About section uses stock cinematic loops (`public/media/door|field|snow.mp4`). Replace them with your own clips
+at the same file names. Keep them around 960px wide and under about 1 MB.
